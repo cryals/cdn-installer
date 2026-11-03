@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""
-VPN CDN Installer v3.0 ULTIMATE EDITION
-Protection Level: 9/10
-
-Features:
-- Hardware Binding (HWID)
-- VM Detection
-- Enhanced Anti-Debug
-- Code Integrity Verification
-- Token Rotation (24h)
-- Remote Kill Switch
-- Memory Protection
-- Network Fingerprinting
-- Buyer Watermarking
-- Anti-Tamper Detection
-- Polymorphic Code Mutation
-
-Interactive wizard: panel (Remnawave/3x-ui) + CDN (VK/Yandex/Beeline/TurboFlare) + node.
-Run on the target server: python3 vpn_cdn_installer.py
-"""
+"""VPN CDN Installer — установщик VPN-инфраструктуры (Remnawave / 3x-ui + CDN)."""
 
 import base64
 import json
@@ -26,527 +7,17 @@ import os
 import re
 import secrets
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
 import hashlib
-import random
-import ctypes
-from pathlib import Path
 
-
-
-# ============================================================
-#  ULTIMATE SECURITY MODULE - PROTECTION LEVEL 9/10
-# ============================================================
-
-SECURITY_LEVEL = "ULTIMATE"
-TOKEN_EXPIRY_HOURS = 168  # 7 days grace period (was 24)
-MUTATION_INTENSITY = 50
-
-# Buyer watermarking (unique per customer)
-BUYER_WATERMARK = "TEST_USER_______________________"
-BUYER_SALT = "400dc1f03cd5149f"
-
-# Expected file hash (set during build)
-EXPECTED_FILE_HASH = "f998c82a860e1db9bde6e50e47990e795dbd0543f74c9ca7210b823cc6d30c8b"
-
-# Token storage
-TOKEN_FILE = Path.home() / ".installer_token"
-
-# ============================================================
-#  WATERMARKING
-# ============================================================
-
-def get_buyer_fingerprint():
-    """Generate unique buyer fingerprint for tracking"""
-    return hashlib.sha256(f"{BUYER_WATERMARK}{BUYER_SALT}".encode()).hexdigest()[:16]
-
-
-# ============================================================
-#  CODE INTEGRITY
-# ============================================================
-
-def verify_code_integrity():
-    """Verify script hasn't been modified"""
-    try:
-        with open(__file__, 'rb') as f:
-            current_hash = hashlib.sha256(f.read()).hexdigest()
-
-        # Allow during development
-        if EXPECTED_FILE_HASH == "f998c82a860e1db9bde6e50e47990e795dbd0543f74c9ca7210b823cc6d30c8b":
-            return True
-
-        return current_hash == EXPECTED_FILE_HASH
-    except Exception:
-        return False
-
-
-# ============================================================
-#  MEMORY PROTECTION
-# ============================================================
-
-def enable_memory_protection():
-    """Prevent memory dumping (Linux only)"""
-    try:
-        if sys.platform == 'linux':
-            libc = ctypes.CDLL('libc.so.6')
-            PR_SET_DUMPABLE = 4
-            libc.prctl(PR_SET_DUMPABLE, 0)
-            return True
-    except Exception:
-        pass
-    return False
-
-
-# ============================================================
-#  TOKEN ROTATION
-# ============================================================
-
-def load_license_token():
-    """Load cached license token"""
-    try:
-        if TOKEN_FILE.exists():
-            data = json.loads(TOKEN_FILE.read_text())
-            return data.get('token'), data.get('expires_at', 0)
-    except Exception:
-        pass
-    return None, 0
-
-def save_license_token(token, expires_at):
-    """Save license token with expiry"""
-    try:
-        TOKEN_FILE.write_text(json.dumps({
-            'token': token,
-            'expires_at': expires_at
-        }))
-        TOKEN_FILE.chmod(0o600)
-    except Exception:
-        pass
-
-def is_token_valid():
-    """Check if cached token is still valid"""
-    token, expires_at = load_license_token()
-    if not token:
-        return False
-    return time.time() < expires_at
-
-
-# ============================================================
-#  NETWORK FINGERPRINTING
-# ============================================================
-
-def get_public_ip():
-    """Get public IP address"""
-    try:
-        import urllib.request
-        response = urllib.request.urlopen('https://api.ipify.org', timeout=5)
-        return response.read().decode().strip()
-    except Exception:
-        return None
-
-def validate_network_location(hwid, license_api):
-    """Validate network location"""
-    try:
-        public_ip = get_public_ip()
-        if not public_ip:
-            return True
-
-        import urllib.request
-        payload = json.dumps({
-            'hwid': hwid,
-            'ip': public_ip,
-            'action': 'validate_network'
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{license_api}/api/validate_network",
-            data=payload,
-            headers={"Content-Type": "application/json"}
-        )
-
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-        return result.get('allowed', True)
-    except Exception:
-        return True
-
-
-# ============================================================
-#  REMOTE KILL SWITCH
-# ============================================================
-
-def check_kill_switch(hwid, license_key, license_api):
-    """Check if license has been remotely revoked"""
-    try:
-        import urllib.request
-        payload = json.dumps({
-            'hwid': hwid,
-            'key': license_key,
-            'action': 'check_status'
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{license_api}/api/license_status",
-            data=payload,
-            headers={"Content-Type": "application/json"}
-        )
-
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-
-        return result.get('revoked', False)
-    except Exception:
-        return False
-
-def execute_kill_switch():
-    """Execute when license is revoked"""
-    print("\n  ⚠ Лицензия отозвана администратором")
-    print("  Свяжитесь с поддержкой: @cdnsetting_bot\n")
-    sys.exit(1)
-
-
-# ============================================================
-#  ANTI-TAMPER
-# ============================================================
-
-_TAMPER_CHECKS = []
-
-def register_tamper_check(func):
-    """Register function for anti-tamper verification"""
-    _TAMPER_CHECKS.append(func)
-    return func
-
-@register_tamper_check
-def check_critical_functions():
-    """Verify critical functions haven't been patched"""
-    critical = ['verify_code_integrity', 'check_kill_switch', 'get_hardware_id']
-    for func_name in critical:
-        if func_name not in globals() or not callable(globals().get(func_name)):
-            return False
-    return True
-
-@register_tamper_check
-def check_module_imports():
-    """Verify no suspicious modules loaded"""
-    # Only real interactive debuggers. 'dis'/'trace' are stdlib modules that
-    # Python 3.14+ auto-loads into sys.modules at startup -> false positives.
-    suspicious = ['pdb', 'bdb']
-    for mod in suspicious:
-        if mod in sys.modules:
-            return False
-    return True
-
-def run_tamper_checks():
-    """Execute all anti-tamper checks"""
-    for check in _TAMPER_CHECKS:
-        try:
-            if not check():
-                return False
-        except Exception:
-            return False
-    return True
-
-
-# ============================================================
-#  POLYMORPHIC CODE
-# ============================================================
-
-def polymorphic_mutation():
-    """Execute random operations to change runtime signature"""
-    operations = [
-        lambda: sum(range(random.randint(100, 1000))),
-        lambda: len([x for x in range(random.randint(50, 500)) if x % 2 == 0]),
-        lambda: hashlib.md5(str(random.random()).encode()).hexdigest(),
-        lambda: ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=random.randint(10, 50))),
-    ]
-
-    for _ in range(MUTATION_INTENSITY):
-        operation = random.choice(operations)
-        _ = operation()
-        time.sleep(random.uniform(0.0001, 0.001))
-
-
-# ============================================================
-#  HARDWARE BINDING
-# ============================================================
-
-def get_hardware_id():
-    """
-    Generate unique hardware ID from CPU + MAC + Disk serial.
-    This binds the license to specific hardware.
-    """
-    try:
-        # CPU model
-        cpu = subprocess.check_output(
-            "cat /proc/cpuinfo | grep 'model name' | head -1",
-            shell=True, stderr=subprocess.DEVNULL
-        ).decode().strip()
-    except:
-        cpu = "unknown_cpu"
-
-    try:
-        # Primary MAC address
-        mac = subprocess.check_output(
-            "cat /sys/class/net/$(ip route show default | awk '/default/ {print $5}')/address",
-            shell=True, stderr=subprocess.DEVNULL
-        ).decode().strip()
-    except:
-        mac = "unknown_mac"
-
-    try:
-        # Root disk serial
-        disk = subprocess.check_output(
-            "lsblk -dno serial $(df / | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//')",
-            shell=True, stderr=subprocess.DEVNULL
-        ).decode().strip()
-    except:
-        disk = "unknown_disk"
-
-    hwid = hashlib.sha256(f"{cpu}{mac}{disk}".encode()).hexdigest()
-    return hwid
-
-
-# ============================================================
-#  VM DETECTION
-# ============================================================
-
-def detect_vm():
-    """
-    Detect if running in a VM/sandbox for reverse engineering.
-    Returns True if VM detected, False otherwise.
-    """
-    vm_indicators = [
-        ("dmidecode -s system-manufacturer 2>/dev/null",
-         ["VMware", "VirtualBox", "QEMU", "Xen", "KVM", "Microsoft Corporation"]),
-        ("lscpu | grep Hypervisor 2>/dev/null",
-         ["KVM", "VMware", "Hyper-V"]),
-        ("cat /sys/class/dmi/id/product_name 2>/dev/null",
-         ["VirtualBox", "VMware", "QEMU"]),
-        ("systemd-detect-virt 2>/dev/null",
-         ["kvm", "qemu", "vmware", "oracle", "xen"]),
-    ]
-
-    for cmd, patterns in vm_indicators:
-        try:
-            out = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode()
-            for pattern in patterns:
-                if pattern.lower() in out.lower():
-                    return True
-        except:
-            pass
-
-    return False
-
-
-# ============================================================
-#  ANTI-DEBUG ENHANCEMENTS
-# ============================================================
-
-def enhanced_anti_debug():
-    """
-    Enhanced anti-debugging checks beyond _px9().
-    """
-    # Check for LD_PRELOAD hooks
-    if "LD_PRELOAD" in os.environ:
-        os._exit(1)
-
-    # Check for common debugging env vars
-    debug_vars = [
-        "PYTHONBREAKPOINT", "_PDBPP_RESTART", "PYDEVD_USE_FRAME_EVAL",
-        "PYCHARM_DEBUG", "PYTHONTRACE", "PYTHONINSPECT"
-    ]
-    if any(var in os.environ for var in debug_vars):
-        os._exit(1)
-
-    # Check if stdin is a TTY (debuggers often redirect)
-    try:
-        import sys
-        if not sys.stdin.isatty() and sys.stdin.seekable():
-            # Debugger might have redirected stdin
-            pass  # Allow for now, but log
-    except:
-        pass
-
-    # Timing check with randomization (harder to bypass)
-    import random
-    iterations = random.randint(500000, 1000000)
-    t1 = time.monotonic()
-    sum(range(iterations))
-    t2 = time.monotonic()
-
-    # Dynamic threshold based on iterations
-    threshold = (iterations / 500000) * 1.5
-    if t2 - t1 > threshold:
-        os._exit(1)
-
-
-# ============================================================
-#  SERVER-SIDE ACTION VALIDATION
-# ============================================================
-
-def validate_action_with_server(license_key, action_name, hwid, license_api):
-    """
-    Validate each critical action with the license server.
-    This prevents bypassing license checks locally.
-
-    Args:
-        license_key: User's license key
-        action_name: Name of action to validate (e.g., "install_remnawave")
-        hwid: Hardware ID
-        license_api: License server URL
-
-    Returns:
-        dict with {"allowed": bool, "token": str} or None on error
-    """
-    try:
-        payload = {
-            "key": license_key,
-            "action": action_name,
-            "hwid": hwid,
-            "timestamp": time.time(),
-            "nonce": secrets.token_hex(16)
-        }
-
-        req = urllib.request.Request(
-            f"{license_api}/api/validate_action",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
-        )
-
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-
-        return result
-
-    except Exception as e:
-        # Fail-closed for security: if server unreachable, deny action
-        print(f"  ⚠ Ошибка валидации действия: {e}")
-        return {"allowed": False, "error": str(e)}
-
-
-# ============================================================
-#  CODE SIGNING
-# ============================================================
-
-def generate_script_signature(secret_key):
-    """
-    Generate HMAC signature of the script.
-    Secret key should be stored only on server.
-    """
-    import hmac
-    try:
-        with open(__file__, 'rb') as f:
-            code = f.read()
-        signature = hmac.new(secret_key.encode(), code, hashlib.sha256).hexdigest()
-        return signature
-    except:
-        return None
-
-
-def verify_script_signature(expected_sig, secret_key):
-    """
-    Verify script hasn't been modified.
-    """
-    actual_sig = generate_script_signature(secret_key)
-    if not actual_sig:
-        return False
-    return actual_sig == expected_sig
-
-
-# ============================================================
-#  INTEGRATION HELPERS
-# ============================================================
-
-def enhanced_license_check(key, server_ip, license_api):
-    """
-    Enhanced license check with hardware binding and VM detection.
-
-    Returns:
-        tuple: (success: bool, hwid: str, result: dict)
-    """
-    # Run enhanced anti-debug
-    enhanced_anti_debug()
-
-    # Detect VM
-    if detect_vm():
-        print("  ⚠ Обнаружена виртуализация (VM/sandbox)")
-        print("  Для анализа безопасности используйте --allow-vm")
-        # Allow VM but log it server-side
-        is_vm = True
-    else:
-        is_vm = False
-
-    # Get hardware ID
-    hwid = get_hardware_id()
-
-    # Send to server with hwid
-    try:
-        payload = {
-            "key": key,
-            "server_ip": server_ip,
-            "hwid": hwid,
-            "is_vm": is_vm,
-            "timestamp": time.time()
-        }
-
-        req = urllib.request.Request(
-            f"{license_api}/api/activate_v2",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
-        )
-
-        resp = urllib.request.urlopen(req, timeout=15)
-        result = json.loads(resp.read())
-
-        return (True, hwid, result)
-
-    except Exception as e:
-        print(f"  ❌ Ошибка проверки лицензии: {e}")
-        return (False, hwid, {"error": str(e)})
-
-
-# ============================================================
-#  EXPORT
-# ============================================================
-
-__all__ = [
-    'get_hardware_id',
-    'detect_vm',
-    'enhanced_anti_debug',
-    'validate_action_with_server',
-    'enhanced_license_check',
-    'verify_script_signature'
-]
-
-
-_license_hwid = None
-SECURITY_ENHANCED = True
 
 
 _install_log = []
 _current_step = ""
-_r3q = 0
-_t9m = []
-
-_XK = 'L7Cx7EVR2GVqbk90xeuwXyxQyWEOKv5GpxH5+vFcHpI='
-def _xd(e):
-    import base64 as _b
-    _k = _b.b64decode(_XK)
-    _d = _b.b64decode(e)
-    return bytes(b ^ _k[i % len(_k)] for i, b in enumerate(_d)).decode()
-
-
-# LICENSE_API with separate key
-_API_KEY = 'DT3L39O6pVycAIRe+TjE6lwdkNE5h1Aq'
-def _xd_api(e):
-    import base64 as _b
-    _k = _b.b64decode(_API_KEY)
-    _d = _b.b64decode(e)
-    return bytes(b ^ _k[i % len(_k)] for i, b in enumerate(_d)).decode()
 
 
 def track(action_type, value):
@@ -652,7 +123,6 @@ VERSION = "3.0"
 # Remnawave versions
 REMNAWAVE_VERSION_LEGACY = "2.8.1"  # Legacy version with JWT_AUTH_SECRET/JWT_API_TOKENS_SECRET
 REMNAWAVE_VERSION_LATEST = "3.2.3"  # Latest version with APP_SECRET
-LICENSE_API = _xd_api("ZUm/r+mVim+kLrVtzRbw2XIuqesBt2ga")
 
 SYSCTL_TUNING = """net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -992,8 +462,6 @@ def iptables_add(rule, remote_ip=None, remote_cred=None):
 
 def remnawave_api(token, method, path, data=None, base_url=None):
     """Make API call to Remnawave panel. Local (127.0.0.1:3000) or remote (base_url)."""
-    if not _r3q:
-        return {"error": "E-0x3A", "statusCode": 500}
     import urllib.request, urllib.error, ssl
     if base_url:
         base = base_url.rstrip('/')
@@ -2197,12 +1665,7 @@ def nginx_cdn_origin(xray_port, xhttp_path, panel_path=None, panel_port=None, ip
                   rewrite, добавляющий слеш, иначе xhttp не матчится.
                   Проверено на Beeline 28.07.2026 (4/4 оператора).
     """
-    if not _t9m or (time.time() - _t9m[0]) > 7200:
-        # Ensure xray_port is integer before arithmetic
-        try:
-            xray_port = int(xray_port) + 1
-        except (ValueError, TypeError):
-            xray_port = 2053  # Fallback to default
+    xray_port = int(xray_port)
 
     panel_block = ""
     if panel_path and panel_port:
@@ -2326,10 +1789,6 @@ server {{
 
 def setup_remote_node(node_ip, node_cred, rcfg, secret_key, domain, panel_ip):
     """Install Docker, nginx CDN origin, and remnanode on remote server via SSH."""
-    _px9()
-    if not globals().get('_r3q'):
-        secret_key = secrets.token_hex(16)
-
     print(f"  [удалённая] Подключение к {node_ip}...")
     r = run_remote(node_ip, node_cred, "echo OK", timeout=30)
     if "OK" not in r.stdout:
@@ -3385,10 +2844,6 @@ VALUES ((SELECT id FROM clients WHERE email='eu_grpc_user'), (SELECT id FROM inb
 
 def install_3xui(cfg):
     """Install 3x-ui with VK or Yandex CDN inbound."""
-    if len(_t9m) < 4:
-        time.sleep(15)
-        print(f"  ❌ Внутренняя ошибка инициализации (E-0x7F)")
-        sys.exit(1)
     domain = cfg["domain"]
     cdn_type = cfg["cdn_type"]
     cdn = CDN_SETTINGS[cdn_type]
@@ -5583,6 +5038,7 @@ server {{
         "expireAt": "2099-12-31T23:59:59.000Z",
         "trafficLimitBytes": 0,
         "trafficLimitStrategy": "NO_RESET",
+        # NOTE: поле лимита устройств API Remnawave участвует в работе.
         "hwidDeviceLimit": 0
     }
     if bridge_squad:
@@ -6733,6 +6189,7 @@ server {{
             "expireAt": "2099-12-31T23:59:59.000Z",
             "trafficLimitBytes": 0,
             "trafficLimitStrategy": "NO_RESET",
+            # NOTE: поле лимита устройств API Remnawave участвует в работе.
             "hwidDeviceLimit": 0
         }
         if _user_squad:
@@ -7142,9 +6599,6 @@ server {{
 
 def install_node_only(cfg):
     """Install only the node + CDN origin, connect to existing Remnawave panel via SSH API."""
-    _v = globals().get('_r3q', 0)
-    if not (_v and (_v & 1)):
-        cfg["cdn_type"] = "vk" if cfg.get("cdn_type") == "yandex" else "yandex"
     cdn_type = cfg["cdn_type"]
     rcfg = REMNAWAVE_CDN[cdn_type]
     server_ip = cfg["server_ip"]
@@ -8012,7 +7466,6 @@ def install_node_only(cfg):
 
 def common_setup(cfg):
     """Install packages, tune OS, setup SSL and decoy."""
-    _px9()
     domain = cfg["domain"]
 
     step(1, "Подготовка системы")
@@ -8114,333 +7567,7 @@ def parse_args():
     parser.add_argument("--cascade-ip", help="Cascade relay server IP")
     parser.add_argument("--cascade-pass", help="Cascade relay SSH password")
     parser.add_argument("--cascade-user", default="root", help="Cascade relay SSH user")
-    parser.add_argument("--key", help="License key for activation")
     return parser.parse_args()
-
-
-_LSK = _xd("Xfmahy0knzMTGwUn/bLeN2NkhghETb8x1GaguKdqTMIZn/u8NiCITgccLEk=")
-
-def _vrf(data):
-    """Verify Ed25519 signature on license response."""
-    # TEST MODE: Skip signature verification for test API
-    return True
-
-def _get_real_time():
-    """Get real time via NTP, fallback to HTTP Date header."""
-    import struct, socket
-    for ntp_host in ("pool.ntp.org", "time.google.com", "time.cloudflare.com"):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(3)
-            pkt = b'\x1b' + 47 * b'\0'
-            s.sendto(pkt, (ntp_host, 123))
-            data, _ = s.recvfrom(1024)
-            s.close()
-            t = struct.unpack('!12I', data)[10] - 2208988800
-            return float(t)
-        except Exception:
-            continue
-    try:
-        import urllib.request
-        r = urllib.request.urlopen("https://www.google.com", timeout=5)
-        from email.utils import parsedate_to_datetime
-        return parsedate_to_datetime(r.headers["Date"]).timestamp()
-    except Exception:
-        return time.time()
-
-def _self_path():
-    """Absolute path to the actual on-disk binary the user downloaded.
-    Nuitka onefile does NOT set sys.frozen (that is a PyInstaller attribute); it
-    exports the real binary path via NUITKA_ONEFILE_BINARY and marks modules with
-    the __compiled__ global. __file__ under onefile points at the temp-extracted
-    bootstrap payload, whose hash never matches the served binary."""
-    p = os.environ.get("NUITKA_ONEFILE_BINARY")
-    if p and os.path.exists(p):
-        return p
-    if globals().get("__compiled__") is not None or getattr(sys, 'frozen', False):
-        if os.path.exists(sys.executable):
-            return sys.executable
-    try:
-        return os.path.abspath(__file__)
-    except NameError:
-        return None
-
-
-def _check_integrity():
-    """Verify binary hasn't been tampered with. Fail-open when the binary cannot
-    locate itself or the server is unreachable — a legitimate install must never
-    be blocked by a self-check hiccup (license + OTP + server-side configs are the
-    real gate). Only a definitive hash mismatch from the server blocks.
-
-    For v3: disabled for downloaded files (./installer) since hash check compares
-    different filenames. Local verify_code_integrity() provides protection."""
-    import hashlib, urllib.request
-    exe = _self_path()
-    if not exe:
-        return True
-
-    # Skip check for downloaded 'installer' files (different filename from server)
-    if os.path.basename(exe) in ['installer', 'install.py', 'setup.py']:
-        return True
-
-    try:
-        with open(exe, 'rb') as f:
-            h = hashlib.sha256(f.read()).hexdigest()
-    except OSError:
-        return True
-    try:
-        req = urllib.request.Request(
-            f"{LICENSE_API}/api/integrity",
-            data=json.dumps({"h": h}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-    except Exception:
-        return True
-    return result.get("ok", False)
-
-def _px9():
-    try:
-        with open('/proc/self/status') as _f:
-            for _ln in _f:
-                if _ln.startswith('TracerPid:'):
-                    if int(_ln.split(':')[1].strip()) != 0:
-                        os._exit(1)
-    except Exception:
-        pass
-    try:
-        _pp = os.getppid()
-        with open(f'/proc/{_pp}/comm') as _f:
-            _pn = _f.read().strip()
-            if _pn in ('strace', 'ltrace', 'gdb', 'lldb', 'ida', 'r2', 'radare2', 'frida', 'objection'):
-                os._exit(1)
-    except Exception:
-        pass
-    try:
-        _e = os.environ
-        if any(k in _e for k in ('PYDEVD_USE_FRAME_EVAL', 'PYCHARM_DEBUG', 'PYTHONBREAKPOINT', '_PDBPP_RESTART')):
-            os._exit(1)
-    except Exception:
-        pass
-    try:
-        import time as _t; _t1 = _t.monotonic(); sum(range(800000)); _t2 = _t.monotonic()
-        if _t2 - _t1 > 2.5:
-            os._exit(1)
-    except Exception:
-        pass
-
-
-def check_license(key, server_ip):
-    import urllib.request
-    import urllib.error
-    global _license_hwid, _r3q, _t9m
-
-    # ========== ULTIMATE SECURITY LAYER ==========
-    print(f"\n  🛡 ULTIMATE SECURITY: запуск проверок...")
-
-    # Step 1: Polymorphic mutation
-    polymorphic_mutation()
-
-    # Step 2: Memory protection
-    if enable_memory_protection():
-        print(f"  ✅ Защита памяти активирована")
-
-    # Step 3: Code integrity
-    if not verify_code_integrity():
-        print(f"  ❌ КРИТИЧНО: Обнаружена модификация кода")
-        print(f"  Скачайте оригинальный скрипт от @cdnsetting_bot")
-        sys.exit(1)
-    print(f"  ✅ Целостность кода подтверждена")
-
-    # Step 4: Anti-tamper checks
-    if not run_tamper_checks():
-        print(f"  ❌ КРИТИЧНО: Обнаружено вмешательство в защиту")
-        sys.exit(1)
-    print(f"  ✅ Anti-tamper: OK")
-
-    # Step 5: Legacy anti-debug
-    _px9()
-    if SECURITY_ENHANCED:
-        enhanced_anti_debug()
-
-    print(f"\n  Проверка лицензии...")
-
-    if not _check_integrity():
-        print(f"  ❌ Ошибка целостности")
-        return False
-
-    real_time = _get_real_time()
-    if abs(real_time - time.time()) > 300:
-        print(f"  ❌ Системное время не совпадает с реальным")
-        return False
-
-    # Hardware binding -- DISABLED: no HWID/VM lock (removed per owner request)
-    hwid = None
-    is_vm = False
-    _license_hwid = None
-
-    # Step 6: Network validation (optional, fail-open)
-    try:
-        if hwid and not validate_network_location(hwid, LICENSE_API):
-            print(f"  ⚠ Подозрительная сеть обнаружена")
-            print(f"  Продолжаем, но действие залогировано")
-    except Exception:
-        pass  # Network check optional
-    print(f"  ✅ Сетевая проверка: OK")
-
-    # Step 7: Kill switch check (optional, fail-open)
-    try:
-        if hwid and check_kill_switch(hwid, key, LICENSE_API):
-            execute_kill_switch()
-    except Exception:
-        pass  # Kill switch optional if API unavailable
-
-    # Step 8: Token rotation check
-    if is_token_valid():
-        token, expires_at = load_license_token()
-        remaining = int((expires_at - time.time()) / 3600)
-        print(f"  ✅ Валидный токен (осталось {remaining}ч)")
-
-        # Log buyer fingerprint
-        buyer_fp = get_buyer_fingerprint()
-        print(f"  ✅ Лицензия активна (ID: {buyer_fp})")
-
-        # Bug #21 fix: Initialize _t9m even with valid token
-        _r3q = (os.getpid() ^ 0x5A3C) | 1
-        _t9m = [time.time(), server_ip, key[:8], os.getpid()]
-        print(f"  Загрузка конфигурации...")
-        if not _fetch_session_configs(key, server_ip):
-            print(f"  ⚠️ Не удалось загрузить конфигурацию с сервера")
-            # Don't fail here, continue with defaults
-        else:
-            print(f"  ✅ Конфигурация загружена")
-
-        return True
-
-    cn = secrets.token_hex(16)
-    payload_data = {"key": key, "server_ip": server_ip, "cn": cn}
-    if hwid:
-        payload_data["hwid"] = hwid
-        payload_data["is_vm"] = is_vm
-    payload = json.dumps(payload_data).encode()
-    req = urllib.request.Request(
-        f"{LICENSE_API}/api/activate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        try:
-            resp = urllib.request.urlopen(req, timeout=15)
-            result = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            result = json.loads(e.read())
-        if result.get("tg_verify_required"):
-            vtoken = result.get("verify_token", "")
-            print(f"\n  📲 Код отправлен в Telegram бота @cdnsetting_bot")
-            print(f"  Откройте Telegram и найдите сообщение с кодом.\n")
-            for attempt in range(3):
-                code = input("  Введите код из Telegram: ").strip().upper()
-                if not code:
-                    print("  ❌ Код не может быть пустым")
-                    continue
-                payload2 = json.dumps({"key": key, "server_ip": server_ip, "cn": cn,
-                                       "verify_token": vtoken, "verify_code": code}).encode()
-                req2 = urllib.request.Request(
-                    f"{LICENSE_API}/api/activate", data=payload2,
-                    headers={"Content-Type": "application/json"},
-                )
-                try:
-                    resp2 = urllib.request.urlopen(req2, timeout=15)
-                    result = json.loads(resp2.read())
-                    break
-                except urllib.error.HTTPError as e2:
-                    r2 = json.loads(e2.read())
-                    if r2.get("error") == "wrong_code":
-                        remaining_attempts = 2 - attempt
-                        if remaining_attempts > 0:
-                            print(f"  ❌ Неверный код. Осталось попыток: {remaining_attempts}")
-                        else:
-                            print(f"  ❌ Неверный код. Попытки исчерпаны.")
-                            return False
-                        continue
-                    print(f"  ❌ {r2.get('message', 'Ошибка верификации')}")
-                    return False
-            else:
-                return False
-        if not result.get("ok"):
-            print(f"  ❌ {result.get('message', 'Ключ недействителен')}")
-            return False
-        if not _vrf(result):
-            print(f"  ❌ Ошибка верификации ответа сервера")
-            return False
-        if result.get("cn") != cn:
-            print(f"  ❌ Ошибка верификации (nonce)")
-            return False
-        if result.get("key") != key or result.get("ip") != server_ip:
-            print(f"  ❌ Ошибка верификации (привязка)")
-            return False
-        ts = result.get("ts", 0)
-        if abs(real_time - ts) > 120:
-            print(f"  ❌ Ответ просрочен")
-            return False
-
-        # Step 9: Save token on successful validation
-        new_token = secrets.token_urlsafe(32)
-        expires_at = int(time.time()) + (TOKEN_EXPIRY_HOURS * 3600)
-        save_license_token(new_token, expires_at)
-
-        msg = result.get("message", "OK")
-        if SECURITY_ENHANCED and _license_hwid:
-            print(f"  ✅ Лицензия: {msg} (HWID: {_license_hwid[:16]}...)")
-        else:
-            print(f"  ✅ Лицензия: {msg}")
-        _r3q = (os.getpid() ^ 0x5A3C) | 1
-        _t9m = [time.time(), server_ip, key[:8], os.getpid()]
-        print(f"  Загрузка конфигурации...")
-        if not _fetch_session_configs(key, server_ip):
-            print(f"  ⚠️ Не удалось загрузить конфигурацию с сервера")
-            return False
-        print(f"  ✅ Конфигурация загружена")
-        return True
-    except urllib.error.HTTPError as e:
-        try:
-            result = json.loads(e.read())
-            print(f"  ❌ {result.get('message', 'Ошибка проверки')}")
-        except Exception:
-            print(f"  ❌ Ошибка проверки ключа (HTTP {e.code})")
-        return False
-    except Exception as e:
-        print(f"  ❌ Не удалось проверить ключ: {e}")
-        return False
-
-
-def _fetch_session_configs(key, server_ip):
-    global REMNAWAVE_CDN, CDN_SETTINGS
-    import urllib.request
-    try:
-        payload = json.dumps({"key": key, "server_ip": server_ip}).encode()
-        req = urllib.request.Request(
-            f"{LICENSE_API}/api/session",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp = urllib.request.urlopen(req, timeout=15)
-        result = json.loads(resp.read())
-        if not result.get("ok"):
-            return False
-        if not _vrf(result):
-            return False
-        # Конфиги из session перезаписывают встроенные ТОЛЬКО если непустые.
-        # Если session отдаёт пустышку — остаются встроенные REMNAWAVE_CDN/CDN_SETTINGS
-        # (эксклюзивные настройки каждого CDN, восстановлены 12.08 из memory).
-        if result.get("cdn"):
-            REMNAWAVE_CDN = result["cdn"]
-        if result.get("cdn3x"):
-            CDN_SETTINGS = result["cdn3x"]
-        return True
-    except Exception:
-        return False
 
 
 def turboflare_migration_guide(server_ip):
@@ -8843,16 +7970,6 @@ def main():
     # Get server IP
     server_ip = get_ip()
     print(f"  Server IP: {server_ip}")
-
-    # License check
-    key = args.key or safe_input("  Введите лицензионный ключ: ").strip()
-    if not key:
-        print("  ❌ Ключ не введён")
-        sys.exit(1)
-    if not check_license(key, server_ip):
-        sys.exit(1)
-
-    _px9()
 
     # --- Mode selection ---
     if args.mode:
